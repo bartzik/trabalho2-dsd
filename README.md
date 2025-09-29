@@ -1,1 +1,2 @@
-# trabalo2-dsd
+# trabalho2-dsd
+Débora Bartzik e Lorenzo Zardo
