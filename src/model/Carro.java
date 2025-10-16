@@ -1,7 +1,3 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/Classes/Class.java to edit this template
- */
 package model;
 
 import controller.ExecucaoMalhaController;
@@ -10,19 +6,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
-/**
- *
- * @author Pichau
- */
 public class Carro extends Thread {
-    private Random r = new Random();
+    private Random random = new Random();
     private int velocidade;
     private EstradaCelula estrada;
     private ExclusaoMutuaTipo exclusaoMutuaTipo;
     private ExecucaoMalhaController controller;
+    private static final Object cruzamentoMonitor = new Object();
+    private static final Object moverEstradaNormal = new Object();
 
     public Carro(EstradaCelula estrada, ExclusaoMutuaTipo exclusaoMutuaTipo, ExecucaoMalhaController controller){
-        this.velocidade = r.nextInt(500) + 500;
+        this.velocidade = random.nextInt(500) + 500;
         this.estrada = estrada;
         this.exclusaoMutuaTipo = exclusaoMutuaTipo;
         this.controller = controller;
@@ -30,73 +24,94 @@ public class Carro extends Thread {
 
     @Override
     public void run() {
-        while (!estrada.isSaida() && !this.isInterrupted()) {
-                
-            if (estrada.getProximaEstrada(estrada.getDirecao()).isCruzamento()){
-                percorrerCruzamento();
-            } else if (estrada.isProximaCelulaLivre()) {
-                moverParaProximaCelula();
-            }
+        try {
+            Thread.sleep(velocidade);
+            while (!estrada.isSaida() && !this.isInterrupted()) {
 
-            atualizarInterfaceGrafica();
+                if (estrada.getProximaEstrada().isCruzamento()) {
+                    try {
+                        percorrerCruzamento();
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                } else if (estrada.isProximaCelulaLivre()) {
+                    moverParaCelula(estrada.getProximaEstrada(), true);
+                }
 
-            try {
+                atualizarInterfaceGrafica();
+
                 Thread.sleep(velocidade);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
             }
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
-            
-        if (estrada.isSaida()){
+
+        if (estrada.isSaida()) {
             if (!this.isInterrupted()) this.interrupt();
             removerCarroMalha();
         }
     }
-    
-//  private void removerCarroMalha() {
+
     public void removerCarroMalha() {
         estrada.setCarro(null);
-
-        //this.interrupt();
         controller.removerCarroMalha(this);
-        estrada.liberarEstrada();
+        if(exclusaoMutuaTipo == ExclusaoMutuaTipo.SEMAFORO) {
+            estrada.liberarEstrada();
+        } else {
+            estrada.getLock().unlock();
+        }
         atualizarInterfaceGrafica();
     }
 
-    private void percorrerCruzamento() {
-        // Obter a próxima estrada, que é a primeira célula do cruzamento
-        EstradaCelula primeiraEstradaCruzamento = estrada.getProximaEstrada(estrada.getDirecao());
+    public List<EstradaCelula> monitorPercorrerCruzamento(List<EstradaCelula> estradasAtravessarCruzamento) {
+        List<EstradaCelula> cruzamentosReservados = new ArrayList<>();
+        for (EstradaCelula e : estradasAtravessarCruzamento) {
+            if (e.getLock().tryLock()) {
+                cruzamentosReservados.add(e);
+            } else {
+                liberarCruzamentosReservados(cruzamentosReservados);
+                break;
+            }
+        }
+        return cruzamentosReservados;
+    }
 
-        // Verificar se a próxima estrada é realmente um cruzamento antes de continuar
+    private void liberarCruzamentosReservados(List<EstradaCelula> cruzamentosReservados) {
+        for (EstradaCelula e : cruzamentosReservados) {
+            e.getLock().unlock();
+        }
+        cruzamentosReservados.clear();
+    }
+
+    private void percorrerCruzamento() throws InterruptedException {
+        EstradaCelula primeiraEstradaCruzamento = estrada.getProximaEstrada();
+
         if (primeiraEstradaCruzamento.isCruzamento()) {
-            // Obter o caminho completo do cruzamento
-            List<EstradaCelula> cruzamentoEstradas = primeiraEstradaCruzamento.getCruzamentos();
-            List<EstradaCelula> cruzamentosReservados = getCruzamentosReservados(cruzamentoEstradas);
+            List<EstradaCelula> estradasAtravessarCruzamento = primeiraEstradaCruzamento.getListaEstradaAtrevessarCruzamento();
 
-            System.out.println("Carro: "+this.getName()+"cruzamentos: "+cruzamentoEstradas.size()+"reservados: "+cruzamentosReservados.size());
+            List<EstradaCelula> estradasCruzamentoReservados = null;
 
-            if (cruzamentoEstradas.size() == cruzamentosReservados.size()) {
-                for (EstradaCelula e : cruzamentoEstradas) {
+            if(exclusaoMutuaTipo == ExclusaoMutuaTipo.MONITOR){
+                estradasCruzamentoReservados = monitorPercorrerCruzamento(estradasAtravessarCruzamento);
+            } else {
+                estradasCruzamentoReservados = getCruzamentosReservados(estradasAtravessarCruzamento);
+            }
+
+            if (estradasAtravessarCruzamento.size() == estradasCruzamentoReservados.size()) {
+                for (EstradaCelula e : estradasAtravessarCruzamento) {
                     moverParaCelula(e, false);
-                    // TODO: ver melhor forma de resolver isso, talvez retirar a ultima estrada
-                    // da lista de cruzamentoEstradas, que é a primeira estrada pós cruzamento
-                    if (e.isCruzamento()) { // Resolver delay duplo ao sair do cruzamento
+                    if (e.isCruzamento()) {
                         atualizarInterfaceGrafica();
-                        
-                        try {
-                            Thread.sleep(this.velocidade);
-                        } catch (InterruptedException ex) {
-                            throw new RuntimeException(ex);
-                        }
+                        Thread.sleep(this.velocidade);
                     }
                 }
             }
         }
     }
 
-    private List<EstradaCelula> getCruzamentosReservados(List<EstradaCelula> cruzamentoEstradas) {
+    private List<EstradaCelula> getCruzamentosReservados(List<EstradaCelula> estradasAtravessarCruzamento) {
         ArrayList<EstradaCelula> cruzamentosReservados = new ArrayList<>();
-        for (EstradaCelula cruzamentoTentaReservar : cruzamentoEstradas) {
+        for (EstradaCelula cruzamentoTentaReservar : estradasAtravessarCruzamento) {
             if (cruzamentoTentaReservar.tentarEntrarEstrada()) {
                 cruzamentosReservados.add(cruzamentoTentaReservar);
             } else {
@@ -113,37 +128,48 @@ public class Carro extends Thread {
         }
     }
 
-
-    private void moverParaProximaCelula() {
-        EstradaCelula proximaEstrada = estrada.getProximaEstrada(estrada.getDirecao());
-//        if(proximaEstrada.tentarEntrarEstrada()){
-        moverParaCelula(proximaEstrada, true);
-//        }
-    }
-
-    private void moverParaCelula(EstradaCelula est, boolean testar){
-//        atualizarInterfaceGrafica();
-
+    private void moverParaCelula(EstradaCelula est, boolean testar) {
         boolean reservado = false;
+
         if (testar) {
-            do {
-                //Tenta "reservar/adquirir" a estrada
-                if (est.tentarEntrarEstrada()) {
-                    reservado = true;
-                }
-            } while (!reservado);
+            try {
+                do {
+                    if (exclusaoMutuaTipo == ExclusaoMutuaTipo.MONITOR) {
+                        // MONITOR
+                        if (est.getLock().tryLock()) {
+                            reservado = true;
+                        } else {
+                            sleep(random.nextInt(500));
+                        }
+                    } else {
+                        // SEMAFORO
+                        if (est.tentarEntrarEstrada()) {
+                            reservado = true;
+                        } else {
+                            sleep(random.nextInt(500));
+                        }
+                    }
+                } while (!reservado);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
         }
 
         estrada.setCarro(null);
         est.setCarro(this);
-        estrada.liberarEstrada();
+
+        if (exclusaoMutuaTipo == ExclusaoMutuaTipo.MONITOR && estrada.getLock().isHeldByCurrentThread()) {
+            estrada.getLock().unlock();
+        } else if(exclusaoMutuaTipo == ExclusaoMutuaTipo.SEMAFORO) {
+            estrada.liberarEstrada();
+        }
+
         estrada = est;
-//        atualizarInterfaceGrafica();
+
     }
 
 
     public void atualizarInterfaceGrafica() {
-        // Atualizar a célula onde o carro está (pintar o carro)
         estrada.getMalha().fireTableCellUpdated(estrada.getLin(), estrada.getCol());
         estrada.getMalha().fireTableDataChanged();
     }

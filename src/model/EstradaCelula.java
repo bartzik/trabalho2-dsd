@@ -4,8 +4,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class EstradaCelula {
+    private Random random;
     private Carro carro;
     private int direcao;
     private int col;
@@ -13,6 +15,7 @@ public class EstradaCelula {
     private MalhaTableModel malha;
     private boolean cruzamento;
     private Semaphore mutex;
+    private final ReentrantLock lock = new ReentrantLock(); // MONITOR
 
     public EstradaCelula(int direcao, MalhaTableModel malha, int lin, int col, boolean cruzamento) {
         this.direcao = direcao;
@@ -21,6 +24,80 @@ public class EstradaCelula {
         this.malha = malha;
         this.cruzamento = cruzamento;
         this.mutex = new Semaphore(1);
+        this.random = new Random();
+    }
+
+    public ReentrantLock getLock() {
+        return lock;
+    }
+
+    public List<EstradaCelula> getListaEstradaAtrevessarCruzamento() {
+        List<EstradaCelula> caminhoCruzamento = new ArrayList<>();
+        EstradaCelula proximaEstrada = this;
+        caminhoCruzamento.add(this);
+
+        while (proximaEstrada != null && proximaEstrada.isCruzamento()) {
+            List<Integer> direcoesPossiveis = obterDirecoesPossiveis(proximaEstrada);
+            EstradaCelula novaEstrada = escolherNovaEstrada(direcoesPossiveis, proximaEstrada, caminhoCruzamento);
+
+            // Se não encontrou uma direção válida, sai do loop
+            if (novaEstrada == null) {
+                break;
+            }
+
+            // Adiciona a nova estrada ao caminho e continua
+            caminhoCruzamento.add(novaEstrada);
+            proximaEstrada = novaEstrada;
+        }
+
+        // Adiciona a última célula (que não é mais cruzamento) à lista
+        if (proximaEstrada != null && !caminhoCruzamento.contains(proximaEstrada)) {
+            caminhoCruzamento.add(proximaEstrada);
+        }
+
+        return caminhoCruzamento;
+    }
+
+    private List<Integer> obterDirecoesPossiveis(EstradaCelula estrada) {
+        List<Integer> direcoesPossiveis = new ArrayList<>();
+        int direcao = estrada.getDirecao();
+
+        // Adiciona direções possíveis baseado no valor de direção
+        if (direcao == 5 || direcao == 9 || direcao == 10) {
+            direcoesPossiveis.add(1); // Cima
+        }
+        if (direcao == 6 || direcao == 9 || direcao == 11) {
+            direcoesPossiveis.add(2); // Direita
+        }
+        if (direcao == 7 || direcao == 11 || direcao == 12) {
+            direcoesPossiveis.add(3); // Baixo
+        }
+        if (direcao == 8 || direcao == 10 || direcao == 12) {
+            direcoesPossiveis.add(4); // Esquerda
+        }
+
+        return direcoesPossiveis;
+    }
+
+    private EstradaCelula escolherNovaEstrada(List<Integer> direcoesPossiveis, EstradaCelula proximaEstrada, List<EstradaCelula> caminhoCruzamento) {
+        EstradaCelula novaEstrada = null;
+        int direcaoEscolhida = -1;
+
+        // Tenta encontrar uma direção válida que não leve a um loop
+        while (!direcoesPossiveis.isEmpty()) {
+            direcaoEscolhida = direcoesPossiveis.get(random.nextInt(direcoesPossiveis.size()));
+            novaEstrada = proximaEstrada.getProximaEstrada(direcaoEscolhida);
+
+            // Se a nova estrada já foi percorrida, remove essa direção das possibilidades
+            if (caminhoCruzamento.contains(novaEstrada)) {
+                direcoesPossiveis.remove(Integer.valueOf(direcaoEscolhida));
+                novaEstrada = null; // Resetar para continuar tentando
+            } else {
+                break; // Encontramos uma direção que ainda não foi percorrida
+            }
+        }
+
+        return novaEstrada;
     }
 
     public boolean tentarEntrarEstrada(){
@@ -55,19 +132,24 @@ public class EstradaCelula {
         return (EstradaCelula) malha.getValueAt(novaLinha, novaColuna);
     }
 
+    // Sobrecarga de métodos para melhor legibilidade
+    public EstradaCelula getProximaEstrada() {
+        return getProximaEstrada(this.direcao);
+    }
+
     public boolean isProximaCelulaLivre(){
-        return getProximaEstrada(this.getDirecao()).getCarro() == null;
+        return getProximaEstrada().getCarro() == null;
     }
 
     public boolean isSaida(){
         if(col == 0){
-            if(direcao == 4) return true;
+            return (direcao == 4);
         } else if (lin == 0){
-            if (direcao == 1) return true;
+            return (direcao == 1);
         } else if (col == malha.getColumnCount() - 1){
-            if (direcao == 2) return true;
+            return (direcao == 2);
         } else if (lin == malha.getRowCount() - 1){
-            if (direcao == 3) return true;
+            return (direcao == 3);
         }
         return false;
     }
@@ -126,66 +208,4 @@ public class EstradaCelula {
                 ", direcao=" + direcao +
                 '}';
     }
-
-    public List<EstradaCelula> getCruzamentos() {
-        List<EstradaCelula> caminhoCruzamento = new ArrayList<>();
-        EstradaCelula proximaEstrada = this;
-        caminhoCruzamento.add(this);
-
-        while (proximaEstrada != null && proximaEstrada.isCruzamento()) {
-            List<Integer> direcoesPossiveis = new ArrayList<>();
-
-            // Adiciona direções possíveis baseado no valor de direção
-            if (proximaEstrada.getDirecao() == 5 || proximaEstrada.getDirecao() == 9 || proximaEstrada.getDirecao() == 10) {
-                direcoesPossiveis.add(1); // Cima
-            }
-            if (proximaEstrada.getDirecao() == 6 || proximaEstrada.getDirecao() == 9 || proximaEstrada.getDirecao() == 11) {
-                direcoesPossiveis.add(2); // Direita
-            }
-            if (proximaEstrada.getDirecao() == 7 || proximaEstrada.getDirecao() == 11 || proximaEstrada.getDirecao() == 12) {
-                direcoesPossiveis.add(3); // Baixo
-            }
-            if (proximaEstrada.getDirecao() == 8 || proximaEstrada.getDirecao() == 10 || proximaEstrada.getDirecao() == 12) {
-                direcoesPossiveis.add(4); // Esquerda
-            }
-
-            System.out.println("Direções possíveis: " + direcoesPossiveis);
-//
-            Random random = new Random();
-            EstradaCelula novaEstrada = null;
-            int direcaoEscolhida = -1;
-
-            // Tenta encontrar uma direção válida que não leve a um loop
-            while (!direcoesPossiveis.isEmpty()) {
-                direcaoEscolhida = direcoesPossiveis.get(random.nextInt(direcoesPossiveis.size()));
-                novaEstrada = proximaEstrada.getProximaEstrada(direcaoEscolhida);
-
-                // Se a nova estrada já foi percorrida, remove essa direção das possibilidades
-                if (caminhoCruzamento.contains(novaEstrada)) {
-                    System.out.println("Ele tentou ir para uma casa já visitada");
-                    direcoesPossiveis.remove(Integer.valueOf(direcaoEscolhida));
-                    novaEstrada = null; // Resetar para continuar tentando
-                } else {
-                    break; // Encontramos uma direção que ainda não foi percorrida
-                }
-            }
-
-            // Se não encontrou uma direção válida, sai do loop
-            if (novaEstrada == null) {
-                break;
-            }
-
-            // Adiciona a nova estrada ao caminho e continua
-            caminhoCruzamento.add(novaEstrada);
-            proximaEstrada = novaEstrada;
-        }
-
-        // Adiciona a última célula (que não é mais cruzamento) à lista
-        if (proximaEstrada != null && !caminhoCruzamento.contains(proximaEstrada)) {
-            caminhoCruzamento.add(proximaEstrada);
-        }
-
-        return caminhoCruzamento;
-    }
-
 }
